@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Header
-from models import UserCreate, PostCreate
+from models import UserCreate, PostCreate, Login, comment
 from database import get_database
 import jwt as pyjwt
 from datetime import datetime, timedelta
@@ -9,7 +9,7 @@ from bson.objectid import ObjectId
 # JWT Configuration
 SECRET_KEY = "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 24*60*30
 
 router = APIRouter()
 
@@ -65,7 +65,7 @@ async def register_user(user: UserCreate):
 
 
 @router.post("/login")
-async def login_user(user: UserCreate):
+async def login_user(user: Login):
     """Login user and return JWT token"""
     db = get_database()
     users_collection = db.get_collection("users")
@@ -97,30 +97,46 @@ async def create_post(post: PostCreate, authorization: str = Header(None)):
 
     result = await posts_collection.insert_one(post_dict)
     return {"message": "Post created successfully", "post_id": str(result.inserted_id)}
+#view posts 
+@router.get("/view-posts")
+async def view_posts():
+    """View all posts"""
+    db = get_database()
+    posts_collection = db.get_collection("posts")
+
+    posts_cursor = posts_collection.find({})
+    posts = []
+    async for post in posts_cursor:
+        post["_id"] = str(post["_id"])  # Convert ObjectId to string
+        posts.append(post)
+
+    return {"posts": posts}
 
 
+
+#comment file on post with json in body
 @router.post("/comment")
-async def comment_on_post(post_id: str, comment: str, authorization: str = Header(None)):
-    """Add comment to a post - commenter is extracted from JWT token"""
+async def comment_on_post(data: comment, authorization: str = Header(None)):
+    """Comment on a post"""
     user_email = verify_token(authorization)
     
     db = get_database()
     posts_collection = db.get_collection("posts")
+    comment_collection = db.get_collection("comments")
 
-    post = await posts_collection.find_one({"_id": ObjectId(post_id)})
+    post = await posts_collection.find_one({"_id": ObjectId(data.post_id)})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    comment_dict = {
+    comment_entry = {
+        "post_id": data.post_id,
         "commenter": user_email,
-        "comment": comment,
+        "comment": data.comment,
+        "timestamp": datetime.utcnow()
     }
 
-    if "comments" not in post:
-        post["comments"] = []
-    post["comments"].append(comment_dict)
-
-    await posts_collection.update_one({"_id": ObjectId(post_id)}, {"$set": {"comments": post["comments"]}})
+    await comment_collection.insert_one(comment_entry)
+    
     return {"message": "Comment added successfully"}
 
 
@@ -129,31 +145,39 @@ async def view_comments(post_id: str):
     """View all comments on a post"""
     db = get_database()
     posts_collection = db.get_collection("posts")
+    comment_collection = db.get_collection("comments")
+    
 
     post = await posts_collection.find_one({"_id": ObjectId(post_id)})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+    
 
-    return {"comments": post.get("comments", [])}
+    comments = await comment_collection.find({"post_id": post_id}).to_list(length=100)
+    for comment in comments:
+        comment["_id"] = str(comment["_id"])  # Convert ObjectId to string
+    return {"posts": [post], "comments": comments}
 
+
+
+
+# I will select comment as the commenter and I will delete it if theres multiple comments from same user on a post I can choose which one to delete
 
 @router.delete("/delete-comment/{post_id}")
-async def delete_comment(post_id: str, comment: str, authorization: str = Header(None)):
-    """Delete a comment - only the user who wrote it can delete"""
+async def delete_comment(post_id: str, authorization: str = Header(None)):
+    """Delete a comment made by the user on a post"""
     user_email = verify_token(authorization)
     
     db = get_database()
-    posts_collection = db.get_collection("posts")
+    posts_collection = db.get_collection("collections")
 
     post = await posts_collection.find_one({"_id": ObjectId(post_id)})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
 
-    comments = post.get("comments", [])
-    updated_comments = [c for c in comments if not (c["commenter"] == user_email and c["comment"] == comment)]
+    await posts_collection.update_one(
+        {"_id": ObjectId(post_id)},
+        {"$pull": {"comments": {"commenter": user_email}}}
+    )
 
-    if len(updated_comments) == len(comments):
-        raise HTTPException(status_code=403, detail="Comment not found or you don't have permission to delete")
-
-    await posts_collection.update_one({"_id": ObjectId(post_id)}, {"$set": {"comments": updated_comments}})
     return {"message": "Comment deleted successfully"}

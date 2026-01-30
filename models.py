@@ -8,3 +8,11 @@ class UserCreate(BaseModel):
 class PostCreate(BaseModel):
     title: str
     content: str
+
+class Login(BaseModel):
+    email: EmailStr
+    password: str
+
+class comment(BaseModel):
+    post_id: str
+    comment: str
