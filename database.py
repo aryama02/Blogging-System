@@ -20,6 +20,3 @@ async def close_mongo_connection():
         db.client.close()
         print("Closed MongoDB connection")
 
-def get_database():
-    # Return the specific database instance
-    return db.client.UsersDB
