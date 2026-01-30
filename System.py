@@ -151,33 +151,32 @@ async def view_comments(post_id: str):
     post = await posts_collection.find_one({"_id": ObjectId(post_id)})
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
-    
+    post["_id"] = str(post["_id"])  # Convert ObjectId to string
 
     comments = await comment_collection.find({"post_id": post_id}).to_list(length=100)
     for comment in comments:
         comment["_id"] = str(comment["_id"])  # Convert ObjectId to string
-    return {"posts": [post], "comments": comments}
-
+    return {"post": post, "comments": comments}
+ 
 
 
 
 # I will select comment as the commenter and I will delete it if theres multiple comments from same user on a post I can choose which one to delete
 
-@router.delete("/delete-comment/{post_id}")
-async def delete_comment(post_id: str, authorization: str = Header(None)):
+@router.delete("/delete-comment/{comment_id}")
+async def delete_comment(comment_id: str, authorization: str = Header(None)):
     """Delete a comment made by the user on a post"""
     user_email = verify_token(authorization)
     
     db = get_database()
-    posts_collection = db.get_collection("collections")
+    comment_collection = db.get_collection("comments")
+    comment = await comment_collection.find_one({"_id": ObjectId(comment_id)})
+    if not comment:
+        raise HTTPException(status_code=404, detail="Comment not found")
+ 
+    if comment["commenter"] != user_email:
+        raise HTTPException(status_code=403, detail="You are not authorized to delete this comment")
 
-    post = await posts_collection.find_one({"_id": ObjectId(post_id)})
-    if not post:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-    await posts_collection.update_one(
-        {"_id": ObjectId(post_id)},
-        {"$pull": {"comments": {"commenter": user_email}}}
-    )
-
+    await comment_collection.delete_one({"_id": ObjectId(comment_id)})
+    
     return {"message": "Comment deleted successfully"}
