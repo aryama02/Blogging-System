@@ -7,4 +7,5 @@ pydantic[email]
 motor
 PyJWT
 email-validator
+redis
 
